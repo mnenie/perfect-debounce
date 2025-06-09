@@ -11,6 +11,11 @@ export interface DebounceOptions {
   @default true
   */
   readonly trailing?: boolean;
+
+  /**
+  Maximum wait for `fn` to be called.
+  */
+  readonly maxWait?: number;
 }
 
 const DEBOUNCE_DEFAULTS: DebounceOptions = {
@@ -61,6 +66,12 @@ export function debounce<ArgumentsT extends unknown[], ReturnT>(
   // Trailing call info
   let trailingArgs: any[];
 
+  // Last invoke time
+  let lastInvokeTime = 0;
+
+  // Max wait timeout
+  let maxWaitTimeout: NodeJS.Timeout;
+
   const applyFn = (_this, args) => {
     currentPromise = _applyPromised(fn, _this, args);
     currentPromise.finally(() => {
@@ -71,28 +82,49 @@ export function debounce<ArgumentsT extends unknown[], ReturnT>(
         return promise;
       }
     });
+    lastInvokeTime = Date.now();
     return currentPromise;
   };
 
   return function (...args: ArgumentsT) {
+    const now = Date.now();
+
     if (currentPromise) {
       if (options.trailing) {
         trailingArgs = args;
       }
       return currentPromise;
     }
+
     return new Promise<ReturnT>((resolve) => {
       const shouldCallNow = !timeout && options.leading;
 
       clearTimeout(timeout);
       timeout = setTimeout(() => {
         timeout = null;
+        clearTimeout(maxWaitTimeout);
         const promise = options.leading ? leadingValue : applyFn(this, args);
         for (const _resolve of resolveList) {
           _resolve(promise);
         }
         resolveList = [];
       }, wait);
+
+      if (options.maxWait) {
+        const timeSinceLastInvoke = now - lastInvokeTime;
+        if (!maxWaitTimeout || timeSinceLastInvoke >= options.maxWait) {
+          clearTimeout(maxWaitTimeout);
+          maxWaitTimeout = setTimeout(() => {
+            timeout && clearTimeout(timeout);
+            timeout = null;
+            const promise = applyFn(this, args);
+            for (const _resolve of resolveList) {
+              _resolve(promise);
+            }
+            resolveList = [];
+          }, options.maxWait - timeSinceLastInvoke);
+        }
+      }
 
       if (shouldCallNow) {
         leadingValue = applyFn(this, args);
